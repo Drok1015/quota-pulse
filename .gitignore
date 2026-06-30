@@ -1,0 +1,15 @@
+# Build artifacts
+*.swiftmodule/
+*.swiftdoc
+QuotaPulse
+outputs/
+
+# macOS
+.DS_Store
+*.app
+
+# IDE
+.idea/
+.vscode/
+*.xcworkspace/
+*.xcuserdata/
