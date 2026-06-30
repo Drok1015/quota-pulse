@@ -1,39 +1,41 @@
 # QuotaPulse · 额度脉搏
 
-macOS menu bar app that shows your AI API quota / balance at a glance. No more tab-switching to check if you're about to run out of tokens.
+[English](./README_EN.md)
 
-Currently supports **GLM (Zhipu BigModel)** and **DeepSeek**.
+一个 macOS 菜单栏小工具，把 AI API 的额度/余额实时挂在你屏幕顶部，抬眼可见，不用切窗口、不用开网页。
 
-## Features
+目前支持 **GLM（智谱 BigModel）** 和 **DeepSeek**。
 
-- **GLM**: Shows 5h-window and 7-day-window quota usage percentages right in the menu bar. Color-coded by remaining quota (green → yellow → red). Click the menu to see exact reset countdowns.
-- **DeepSeek**: Shows account balance in the menu bar. A colored dot indicates peak/off-peak billing (red = peak hours 9am–12pm & 2pm–6pm Shanghai time, ×2 rates). One-click toggle between Flash and Pro models.
-- **Auto-refresh**: Fetches latest quota data every 5 minutes. Updates display colors every minute.
-- **Local cache**: Works offline with cached data from the last successful fetch.
-- **Pure menu bar**: No Dock icon, no windows, no interruptions. Just a number in your menu bar.
+## 功能
 
-## Requirements
+- **GLM**：菜单栏直接显示 5 小时窗口和 7 天窗口的配额用量百分比（如 `32% / 18%`）。按剩余额度红黄绿变色（所剩无几 → 红色，快见底 → 黄色，充裕 → 绿色）。点开菜单看精确重置倒计时。
+- **DeepSeek**：菜单栏显示账户余额 ¥。小圆点标示当前是否在高峰计费时段（每天 9:00–12:00、14:00–18:00 上海时间，×2 费率，红点 = 高峰，绿点 = 非高峰）。菜单内一键切换 Flash / Pro 模型。
+- **自动刷新**：每 5 分钟拉取最新额度数据，每分钟更新显示颜色。
+- **本地缓存**：离线也能显示上次成功拉取的数据。
+- **纯菜单栏**：无 Dock 图标、无窗口、不打扰。菜单栏里一个数字，余光就知道状态。
+
+## 环境要求
 
 - macOS 12+
-- Swift toolchain (for building from source)
-- An API key for GLM (open.bigmodel.cn) or DeepSeek
+- Swift 工具链（从源码构建时需要）
+- GLM（open.bigmodel.cn）或 DeepSeek 的 API key
 
-## Quick Start
+## 快速开始
 
-### Method 1: Use with CC Switch (current)
+### 方式一：配合 CC Switch 使用（当前）
 
-QuotaPulse reads your API key and provider selection automatically from [CC Switch](https://github.com/)'s local database. If you already use CC Switch to manage multiple AI coding tool providers, just install CC Switch and launch QuotaPulse — it auto-detects your current provider and key.
+QuotaPulse 会自动从 [CC Switch](https://github.com/) 的本地数据库读取当前选中的渠道和 API key。如果你已经在用 CC Switch 管理多个 AI 编程工具渠道，装了 CC Switch 后直接启动 QuotaPulse 即可——它会自动识别你当前的 provider。
 
 ```bash
 ./build.sh
 open ./outputs/QuotaPulse.app
 ```
 
-### Method 2: Standalone (coming soon)
+### 方式二：独立使用（开发中）
 
-A standalone version that lets you paste your API key directly is in the works. No dependency on CC Switch needed.
+正在做一个独立版本：不依赖任何工具，直接粘贴 API key 就能用。无论是 GLM、DeepSeek 还是更多平台，填个 key 就能在菜单栏看额度。
 
-## Build from Source
+## 从源码构建
 
 ```bash
 git clone https://github.com/Drok1015/quota-pulse.git
@@ -42,18 +44,18 @@ cd quota-pulse
 open ./outputs/QuotaPulse.app
 ```
 
-The app starts silently in your menu bar. Look for the quota percentage or balance number.
+启动后静默运行在菜单栏，找到那个额度数字或余额金额即可。
 
-## How It Works
+## 工作原理
 
-- Queries GLM's `/api/monitor/usage/quota/limit` or DeepSeek's `/user/balance` endpoint
-- Extracts your API key from CC Switch's SQLite database (`~/.cc-switch/cc-switch.db`)
-- Renders a single number or percentage in the macOS menu bar, color-coded by remaining quota
-- A pulldown menu shows detailed breakdown: time windows, reset countdowns, peak-hour status, balance breakdown, and model switcher
+- 请求 GLM 的 `/api/monitor/usage/quota/limit` 或 DeepSeek 的 `/user/balance` 接口
+- 从 CC Switch 的 SQLite 数据库（`~/.cc-switch/cc-switch.db`）读取 API key
+- 在 macOS 菜单栏渲染一个数字或百分比，按剩余额度变色
+- 下拉菜单展示详情：时间窗口、重置倒计时、高峰时段状态、余额明细、模型切换
 
-## Tech Stack
+## 技术栈
 
-Single-file Swift native app (~500 lines). Compiled with `swiftc -O`. No dependencies beyond Foundation and Cocoa.
+单文件 Swift 原生应用（约 500 行）。`swiftc -O` 编译。零外部依赖，仅使用 Foundation 和 Cocoa。
 
 ## License
 
