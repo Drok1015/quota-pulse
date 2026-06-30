@@ -33,7 +33,17 @@ open ./outputs/QuotaPulse.app
 
 ### 方式二：独立使用（开发中）
 
-正在做一个独立版本：不依赖任何工具，直接粘贴 API key 就能用。无论是 GLM、DeepSeek 还是更多平台，填个 key 就能在菜单栏看额度。
+### 方式二：独立使用（无需 CC Switch）
+
+不想装 CC Switch？直接在 QuotaPulse 里填 API key 也能用。启动 app 后，如果没检测到任何 key，菜单里会出现「登录配置 API Key」项，点开一个登录窗口：
+
+- **选择供应商**：GLM（智谱 BigModel）或 DeepSeek，下拉切换后下方会提示去哪获取 key（GLM 在 open.bigmodel.cn → API Keys，DeepSeek 在 platform.deepseek.com 用户中心）
+- **粘贴 API Key**：安全输入框，内容不会明文显示
+- **登录**：保存后立即刷新额度；key 存在 `~/.codex/.quota-pulse-config.json`
+
+登录后菜单显示当前账号，并提供「重新登录」「退出登录」。退出登录会清除手动配置，自动回退到环境变量 / CC Switch 探测。
+
+**配置优先级**：手动登录配置 > 环境变量（`GLM_API_KEY` / `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`）> CC Switch 数据库。也就是说不管你用哪种方式，QuotaPulse 都能拿到 key。
 
 ## 从源码构建
 

@@ -33,7 +33,17 @@ open ./outputs/QuotaPulse.app
 
 ### Method 2: Standalone (coming soon)
 
-A standalone version that lets you paste your API key directly is in the works. No dependency on CC Switch needed.
+### Method 2: Standalone (no CC Switch needed)
+
+Don't want to install CC Switch? Paste your API key directly into QuotaPulse. Launch the app and, if no key is detected, a "Login / Configure API Key" item appears in the menu — click it to open a login window:
+
+- **Choose provider**: GLM (Zhipu BigModel) or DeepSeek. The dropdown switches a hint showing where to get your key (GLM at open.bigmodel.cn → API Keys, DeepSeek at platform.deepseek.com user center)
+- **Paste API Key**: a secure text field — input is masked
+- **Login**: saves the config and immediately refreshes; the key is stored at `~/.codex/.quota-pulse-config.json`
+
+Once logged in, the menu shows the current account and offers "Re-login" / "Log out". Logging out clears the manual config and falls back to env vars / CC Switch detection.
+
+**Key resolution priority**: manual login config > environment variables (`GLM_API_KEY` / `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`) > CC Switch database. So no matter which method you use, QuotaPulse can find your key.
 
 ## Build from Source
 
