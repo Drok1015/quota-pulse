@@ -96,6 +96,7 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var displayTimer: Timer?
     private let quotaData = QuotaData()
+    private var loginWindow: LoginWindowController?
 
     private let glmAPIURL = URL(string: "https://open.bigmodel.cn/api/monitor/usage/quota/limit")!
     private let deepSeekBalanceURL = URL(string: "https://api.deepseek.com/user/balance")!
@@ -145,6 +146,11 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
 
     /// 同时决定 provider 类型和对应的 API key
     private func resolveProviderAndKey() -> (provider: ProviderType, key: String)? {
+        // 1. 手动配置优先（独立运行模式）
+        if let manual = readManualConfig() {
+            return (manual.provider, manual.key)
+        }
+        // 2. 环境变量 / CC Switch 自动探测
         guard let key = resolveAPIKey() else { return nil }
         let providerName = detectCurrentProvider()?.lowercased() ?? ""
         if providerName.contains("deepseek") {
@@ -188,6 +194,44 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
         try task.run()
         task.waitUntilExit()
         return String(data: p.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    }
+
+    // MARK: - Manual config (standalone mode)
+
+    private var manualConfigURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/.quota-pulse-config.json")
+    }
+
+    private struct ManualConfig: Codable {
+        let provider: String   // "glm" | "deepseek"
+        let apiKey: String
+    }
+
+    private func readManualConfig() -> (provider: ProviderType, key: String)? {
+        guard FileManager.default.fileExists(atPath: manualConfigURL.path),
+              let data = try? Data(contentsOf: manualConfigURL),
+              let cfg = try? JSONDecoder().decode(ManualConfig.self, from: data),
+              !cfg.apiKey.isEmpty else { return nil }
+        let provider: ProviderType = (cfg.provider == "deepseek") ? .deepseek : .glm
+        return (provider, cfg.apiKey)
+    }
+
+    private func saveManualConfig(provider: ProviderType, key: String) {
+        let cfg = ManualConfig(provider: provider == .deepseek ? "deepseek" : "glm", apiKey: key)
+        guard let data = try? JSONEncoder().encode(cfg) else { return }
+        try? FileManager.default.createDirectory(
+            at: manualConfigURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true)
+        try? data.write(to: manualConfigURL, options: .atomic)
+    }
+
+    private func clearManualConfig() {
+        try? FileManager.default.removeItem(at: manualConfigURL)
+    }
+
+    private var hasManualConfig: Bool {
+        readManualConfig() != nil
     }
 
     // MARK: - Refresh
@@ -440,8 +484,38 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
     private func attributed(_ text: String, color: NSColor) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: barFontSize, weight: .regular),
-            .foregroundColor: color,
-        ])
+           .foregroundColor: color,
+       ])
+   }
+
+    // MARK: - Account / login
+
+    private func accountSectionTitle() -> String {
+        if let manual = readManualConfig() {
+            return "账号  \(manual.provider.displayName)"
+        }
+        return "未登录"
+    }
+
+    @objc func showLogin() {
+        let defaultProvider: ProviderType = readManualConfig()?.provider
+            ?? (resolveProviderAndKey()?.provider ?? .glm)
+        let defaultKey: String? = readManualConfig()?.key
+        loginWindow = LoginWindowController(
+            defaultProvider: defaultProvider,
+            defaultKey: defaultKey
+        ) { [weak self] provider, key in
+            guard let self else { return }
+            self.saveManualConfig(provider: provider, key: key)
+            self.loginWindow = nil
+            self.refresh(nil)
+        }
+        loginWindow?.show()
+    }
+
+    @objc func logout() {
+        clearManualConfig()
+        refresh(nil)
     }
 
     private func buildMenu() -> NSMenu {
@@ -478,7 +552,22 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
             modelItem.target = self
             menu.addItem(modelItem)
         case .unknown:
-            menu.addItem(.sectionHeader(title: "未知 provider"))
+            menu.addItem(.sectionHeader(title: "未配置，请登录"))
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: accountSectionTitle()))
+        if hasManualConfig {
+            let relogin = NSMenuItem(title: "重新登录", action: #selector(showLogin), keyEquivalent: "")
+            relogin.target = self
+            menu.addItem(relogin)
+            let logoutItem = NSMenuItem(title: "退出登录", action: #selector(logout), keyEquivalent: "")
+            logoutItem.target = self
+            menu.addItem(logoutItem)
+        } else {
+            let loginItem = NSMenuItem(title: "登录配置 API Key", action: #selector(showLogin), keyEquivalent: "l")
+            loginItem.target = self
+            menu.addItem(loginItem)
         }
 
         menu.addItem(.separator())
@@ -502,6 +591,114 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
         let filled = min(10, max(0, Int(balance / maxBalance * 10)))
         let empty = 10 - filled
         return String(repeating: "█", count: filled) + String(repeating: "░", count: empty)
+    }
+}
+
+// MARK: - Login window
+
+final class LoginWindowController: NSObject {
+    private var window: NSWindow!
+    private var providerPopup: NSPopUpButton!
+    private var keyField: NSSecureTextField!
+    private var hintLabel: NSTextField!
+    private let onLogin: (ProviderType, String) -> Void
+
+    init(defaultProvider: ProviderType,
+         defaultKey: String?,
+         onLogin: @escaping (ProviderType, String) -> Void) {
+        self.onLogin = onLogin
+        super.init()
+        buildWindow(defaultProvider: defaultProvider, defaultKey: defaultKey)
+    }
+
+    func show() {
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func buildWindow(defaultProvider: ProviderType, defaultKey: String?) {
+        let w: CGFloat = 380, h: CGFloat = 240
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: w, height: h),
+                          styleMask: [.titled, .closable],
+                          backing: .buffered, defer: false)
+        window.title = "QuotaPulse 登录"
+        window.isReleasedWhenClosed = false
+
+        let view = window.contentView!
+        let m: CGFloat = 20
+        let fw = w - m * 2
+
+        let titleLabel = NSTextField(labelWithString: "配置 API")
+        titleLabel.font = .boldSystemFont(ofSize: 14)
+        titleLabel.frame = NSRect(x: m, y: h - 34, width: fw, height: 20)
+        view.addSubview(titleLabel)
+
+        let providerLabel = NSTextField(labelWithString: "供应商")
+        providerLabel.frame = NSRect(x: m, y: h - 66, width: fw, height: 16)
+        view.addSubview(providerLabel)
+
+        providerPopup = NSPopUpButton(frame: NSRect(x: m, y: h - 96, width: fw, height: 26),
+                                      pullsDown: false)
+        providerPopup.addItems(withTitles: ["GLM（智谱 BigModel）", "DeepSeek"])
+        providerPopup.selectItem(at: defaultProvider == .deepseek ? 1 : 0)
+        providerPopup.target = self
+        providerPopup.action = #selector(providerChanged)
+        view.addSubview(providerPopup)
+
+        let keyLabel = NSTextField(labelWithString: "API Key")
+        keyLabel.frame = NSRect(x: m, y: h - 130, width: fw, height: 16)
+        view.addSubview(keyLabel)
+
+        keyField = NSSecureTextField(frame: NSRect(x: m, y: h - 160, width: fw, height: 26))
+        keyField.placeholderString = "粘贴你的 API Key"
+        keyField.stringValue = defaultKey ?? ""
+        keyField.drawsBackground = true
+        keyField.bezelStyle = .roundedBezel
+        view.addSubview(keyField)
+
+        hintLabel = NSTextField(labelWithString: "")
+        hintLabel.font = .systemFont(ofSize: 11)
+        hintLabel.textColor = .secondaryLabelColor
+        hintLabel.frame = NSRect(x: m, y: h - 192, width: fw, height: 24)
+        view.addSubview(hintLabel)
+        updateHint()
+
+        let cancelButton = NSButton(title: "取消", target: self, action: #selector(cancel))
+        cancelButton.frame = NSRect(x: w - m - 170, y: 16, width: 70, height: 30)
+        cancelButton.keyEquivalent = "\u{1b}"
+        view.addSubview(cancelButton)
+
+        let loginButton = NSButton(title: "登录", target: self, action: #selector(confirmLogin))
+        loginButton.frame = NSRect(x: w - m - 90, y: 16, width: 70, height: 30)
+        loginButton.keyEquivalent = "\r"
+        view.addSubview(loginButton)
+    }
+
+    private func currentProvider() -> ProviderType {
+        providerPopup.indexOfSelectedItem == 1 ? .deepseek : .glm
+    }
+
+    @objc private func providerChanged() { updateHint() }
+
+    private func updateHint() {
+        switch currentProvider() {
+        case .deepseek: hintLabel.stringValue = "在 platform.deepseek.com 用户中心获取"
+        case .glm:      hintLabel.stringValue = "在 open.bigmodel.cn → API Keys 获取"
+        case .unknown:  hintLabel.stringValue = ""
+        }
+    }
+
+    @objc private func confirmLogin() {
+        let key = keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { NSSound.beep(); return }
+        let provider = currentProvider()
+        window.orderOut(nil)
+        onLogin(provider, key)
+    }
+
+    @objc private func cancel() {
+        window.orderOut(nil)
     }
 }
 
