@@ -31,7 +31,6 @@ QuotaPulse reads your API key and provider selection automatically from [CC Swit
 open ./outputs/QuotaPulse.app
 ```
 
-### Method 2: Standalone (coming soon)
 
 ### Method 2: Standalone (no CC Switch needed)
 
