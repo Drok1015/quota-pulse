@@ -510,7 +510,7 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
 
     private func kimiResetHint(_ data: [String: Any]) -> String? {
         for key in ["reset_at", "resetAt", "reset_time", "resetTime"] {
-            if let value = data[key] { return "resets at \(value)" }
+            if let value = data[key] { return "resets at \(formatKimiResetTime(value))" }
         }
         for key in ["reset_in", "resetIn", "ttl"] {
             if let seconds = intValue(data[key]), seconds > 0 {
@@ -518,6 +518,20 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return nil
+    }
+
+    private func formatKimiResetTime(_ value: Any) -> String {
+        guard let value = value as? String else { return "\(value)" }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = iso.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        guard let date else { return value }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd hh:mm:ss"
+        return formatter.string(from: date)
     }
 
     private func intValue(_ value: Any?) -> Int? {
