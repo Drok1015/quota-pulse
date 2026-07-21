@@ -4,12 +4,13 @@
 
 一个 macOS 菜单栏小工具，把 AI API 的额度/余额实时挂在你屏幕顶部，抬眼可见，不用切窗口、不用开网页。
 
-目前支持 **GLM（智谱 BigModel）** 和 **DeepSeek**。
+目前支持 **GLM（智谱 BigModel）**、**DeepSeek** 和 **Kimi Code**。
 
 ## 功能
 
 - **GLM**：菜单栏直接显示 5 小时窗口和 7 天窗口的配额用量百分比（如 `32% / 18%`）。按剩余额度红黄绿变色（所剩无几 → 红色，快见底 → 黄色，充裕 → 绿色）。点开菜单看精确重置倒计时。
 - **DeepSeek**：菜单栏显示账户余额 ¥。小圆点标示当前是否在高峰计费时段（每天 9:00–12:00、14:00–18:00 上海时间，×2 费率，红点 = 高峰，绿点 = 非高峰）。菜单内一键切换 Flash / Pro 模型。
+- **Kimi Code**：读取 Kimi Code CLI 的本地 OAuth 登录（`~/.kimi/credentials/kimi-code.json`），查询订阅额度的总量和时间窗口；令牌过期时会自动刷新。也支持在登录窗口粘贴 Kimi Code API Key。
 - **自动刷新**：每 5 分钟拉取最新额度数据，每分钟更新显示颜色。
 - **本地缓存**：离线也能显示上次成功拉取的数据。
 - **纯菜单栏**：无 Dock 图标、无窗口、不打扰。菜单栏里一个数字，余光就知道状态。
@@ -18,7 +19,7 @@
 
 - macOS 12+
 - Swift 工具链（从源码构建时需要）
-- GLM（open.bigmodel.cn）或 DeepSeek 的 API key
+- GLM（open.bigmodel.cn）、DeepSeek 或 Kimi Code 的登录凭据/API key
 
 ## 快速开始
 
@@ -36,7 +37,7 @@ open ./outputs/QuotaPulse.app
 
 不想装 CC Switch？直接在 QuotaPulse 里填 API key 也能用。启动 app 后，如果没检测到任何 key，菜单里会出现「登录配置 API Key」项，点开一个登录窗口：
 
-- **选择供应商**：GLM（智谱 BigModel）或 DeepSeek，下拉切换后下方会提示去哪获取 key（GLM 在 open.bigmodel.cn → API Keys，DeepSeek 在 platform.deepseek.com 用户中心）
+- **选择供应商**：GLM（智谱 BigModel）、DeepSeek 或 Kimi Code。Kimi Code 已在本机 CLI 登录时无需额外配置；也可粘贴 Kimi Code API Key。
 - **粘贴 API Key**：安全输入框，内容不会明文显示
 - **登录**：保存后立即刷新额度；key 存在 `~/.codex/.quota-pulse-config.json`
 
@@ -57,7 +58,7 @@ open ./outputs/QuotaPulse.app
 
 ## 工作原理
 
-- 请求 GLM 的 `/api/monitor/usage/quota/limit` 或 DeepSeek 的 `/user/balance` 接口
+- 请求 GLM 的 `/api/monitor/usage/quota/limit`、DeepSeek 的 `/user/balance` 或 Kimi Code 的 `/coding/v1/usages` 接口
 - 从 CC Switch 的 SQLite 数据库（`~/.cc-switch/cc-switch.db`）读取 API key
 - 在 macOS 菜单栏渲染一个数字或百分比，按剩余额度变色
 - 下拉菜单展示详情：时间窗口、重置倒计时、高峰时段状态、余额明细、模型切换

@@ -35,6 +35,38 @@ struct BalanceInfo: Codable {
     }
 }
 
+struct KimiUsageRow {
+    let name: String
+    let used: Int
+    let limit: Int
+    let resetsAt: String?
+
+    var remaining: Int { min(max(limit - used, 0), limit) }
+    var remainingPct: Int {
+        guard limit > 0 else { return 0 }
+        return Int((Double(remaining) / Double(limit) * 100).rounded())
+    }
+    var usedPct: Int { 100 - remainingPct }
+}
+
+struct KimiCredential: Codable {
+    let accessToken: String
+    let refreshToken: String
+    let expiresAt: Double
+    let scope: String?
+    let tokenType: String?
+    let expiresIn: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case refreshToken = "refresh_token"
+        case expiresAt = "expires_at"
+        case scope
+        case tokenType = "token_type"
+        case expiresIn = "expires_in"
+    }
+}
+
 // GLM API 原始响应: { code, data: { limits: [...], level }, success }
 struct APIResponse: Codable {
     let data: APIData?
@@ -54,12 +86,14 @@ struct APILimit: Codable {
 enum ProviderType {
     case glm
     case deepseek
+    case kimi
     case unknown
 
     var displayName: String {
         switch self {
         case .glm:      return "GLM"
         case .deepseek: return "DeepSeek"
+        case .kimi:     return "Kimi Code"
         case .unknown:  return "?"
         }
     }
@@ -68,6 +102,7 @@ enum ProviderType {
         switch self {
         case .glm:      return "GLM 配额"
         case .deepseek: return "DeepSeek 余额"
+        case .kimi:     return "Kimi Code 额度"
         case .unknown:  return "配额"
         }
     }
@@ -76,6 +111,7 @@ enum ProviderType {
         switch self {
         case .glm:      return "Quit QuotaPulse"
         case .deepseek: return "Quit QuotaPulse"
+        case .kimi:     return "Quit QuotaPulse"
         case .unknown:  return "Quit QuotaPulse"
         }
     }
@@ -84,6 +120,7 @@ enum ProviderType {
 final class QuotaData {
     var windows: [QuotaWindow] = []
     var deepSeekBalance: DeepSeekBalance?
+    var kimiUsageRows: [KimiUsageRow] = []
     var providerType: ProviderType = .unknown
     var fetchedAt: Date = Date()
     var ok: Bool = false
@@ -100,6 +137,9 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
 
     private let glmAPIURL = URL(string: "https://open.bigmodel.cn/api/monitor/usage/quota/limit")!
     private let deepSeekBalanceURL = URL(string: "https://api.deepseek.com/user/balance")!
+    private let kimiUsageURL = URL(string: "https://api.kimi.com/coding/v1/usages")!
+    private let kimiOAuthTokenURL = URL(string: "https://auth.kimi.com/api/oauth/token")!
+    private let kimiClientID = "17e5f671-d194-4dfb-9706-5516cb48c098"
     private let cacheURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex/.glm-quota-cache.json")
     private let refreshInterval: TimeInterval = 300
@@ -125,6 +165,7 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Provider detection & API key resolution
 
     private func resolveAPIKey() -> String? {
+        if let v = ProcessInfo.processInfo.environment["KIMI_API_KEY"], !v.isEmpty { return v }
         if let v = ProcessInfo.processInfo.environment["GLM_API_KEY"], !v.isEmpty { return v }
         if let v = ProcessInfo.processInfo.environment["ZHIPU_API_KEY"], !v.isEmpty { return v }
         if let v = ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"], !v.isEmpty { return v }
@@ -150,9 +191,16 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
         if let manual = readManualConfig() {
             return (manual.provider, manual.key)
         }
+        // 2. Kimi Code CLI 的 OAuth 登录可直接查询订阅额度
+        if loadKimiCredential() != nil {
+            return (.kimi, "")
+        }
         // 2. 环境变量 / CC Switch 自动探测
         guard let key = resolveAPIKey() else { return nil }
         let providerName = detectCurrentProvider()?.lowercased() ?? ""
+        if providerName.contains("kimi") || ProcessInfo.processInfo.environment["KIMI_API_KEY"] != nil {
+            return (.kimi, key)
+        }
         if providerName.contains("deepseek") {
             return (.deepseek, key)
         }
@@ -204,7 +252,7 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private struct ManualConfig: Codable {
-        let provider: String   // "glm" | "deepseek"
+        let provider: String   // "glm" | "deepseek" | "kimi"
         let apiKey: String
     }
 
@@ -212,13 +260,24 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
         guard FileManager.default.fileExists(atPath: manualConfigURL.path),
               let data = try? Data(contentsOf: manualConfigURL),
               let cfg = try? JSONDecoder().decode(ManualConfig.self, from: data),
-              !cfg.apiKey.isEmpty else { return nil }
-        let provider: ProviderType = (cfg.provider == "deepseek") ? .deepseek : .glm
+              (cfg.provider == "kimi" || !cfg.apiKey.isEmpty) else { return nil }
+        let provider: ProviderType
+        switch cfg.provider {
+        case "deepseek": provider = .deepseek
+        case "kimi":     provider = .kimi
+        default:           provider = .glm
+        }
         return (provider, cfg.apiKey)
     }
 
     private func saveManualConfig(provider: ProviderType, key: String) {
-        let cfg = ManualConfig(provider: provider == .deepseek ? "deepseek" : "glm", apiKey: key)
+        let providerName: String
+        switch provider {
+        case .deepseek: providerName = "deepseek"
+        case .kimi:     providerName = "kimi"
+        default:        providerName = "glm"
+        }
+        let cfg = ManualConfig(provider: providerName, apiKey: key)
         guard let data = try? JSONEncoder().encode(cfg) else { return }
         try? FileManager.default.createDirectory(
             at: manualConfigURL.deletingLastPathComponent(),
@@ -254,6 +313,8 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
             fetchGLMQuota(key: key)
         case .deepseek:
             fetchDeepSeekBalance(key: key)
+        case .kimi:
+            fetchKimiUsage(key: key)
         case .unknown:
             fetchGLMQuota(key: key)
         }
@@ -297,6 +358,179 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { self.updateDisplay() }
         }
         task.resume()
+    }
+
+    // MARK: - Kimi Code usage
+
+    private var kimiCredentialURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".kimi/credentials/kimi-code.json")
+    }
+
+    private func loadKimiCredential() -> KimiCredential? {
+        guard let data = try? Data(contentsOf: kimiCredentialURL) else { return nil }
+        return try? JSONDecoder().decode(KimiCredential.self, from: data)
+    }
+
+    private func saveKimiCredential(_ credential: KimiCredential) {
+        guard let data = try? JSONEncoder().encode(credential) else { return }
+        try? data.write(to: kimiCredentialURL, options: .atomic)
+    }
+
+    private func fetchKimiUsage(key: String) {
+        // Kimi Code CLI stores a short-lived OAuth token locally. Refresh it before
+        // querying so the menu-bar app shares the existing Kimi Code login.
+        if key.isEmpty, let credential = loadKimiCredential() {
+            if credential.expiresAt <= Date().timeIntervalSince1970 + 60 {
+                refreshKimiCredential(credential) { [weak self] refreshed in
+                    guard let self, let refreshed else {
+                        DispatchQueue.main.async { self?.renderError() }
+                        return
+                    }
+                    self.requestKimiUsage(accessToken: refreshed.accessToken)
+                }
+            } else {
+                requestKimiUsage(accessToken: credential.accessToken)
+            }
+            return
+        }
+        guard !key.isEmpty else {
+            DispatchQueue.main.async { self.renderNoKey() }
+            return
+        }
+        requestKimiUsage(accessToken: key)
+    }
+
+    private func refreshKimiCredential(_ credential: KimiCredential,
+                                       completion: @escaping (KimiCredential?) -> Void) {
+        var request = URLRequest(url: kimiOAuthTokenURL)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // Match Kimi Code CLI's OAuth client identity, including its persisted device ID.
+        request.setValue("kimi_cli", forHTTPHeaderField: "X-Msh-Platform")
+        if let deviceID = try? String(contentsOf: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".kimi/device_id"), encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines), !deviceID.isEmpty {
+            request.setValue(deviceID, forHTTPHeaderField: "X-Msh-Device-Id")
+        }
+        request.httpBody = formData([
+            "client_id": kimiClientID,
+            "grant_type": "refresh_token",
+            "refresh_token": credential.refreshToken,
+        ])
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            guard let self, let data,
+                  let refreshed = try? JSONDecoder().decode(KimiCredential.self, from: data) else {
+                completion(nil)
+                return
+            }
+            self.saveKimiCredential(refreshed)
+            completion(refreshed)
+        }.resume()
+    }
+
+    private func formData(_ values: [String: String]) -> Data? {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        let body = values.map { key, value in
+            let encodedKey = key.addingPercentEncoding(withAllowedCharacters: allowed) ?? key
+            let encodedValue = value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+            return "\(encodedKey)=\(encodedValue)"
+        }.joined(separator: "&")
+        return body.data(using: .utf8)
+    }
+
+    private func requestKimiUsage(accessToken: String) {
+        var request = URLRequest(url: kimiUsageURL)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            guard let self,
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let data,
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                DispatchQueue.main.async { self?.renderError() }
+                return
+            }
+            let rows = self.parseKimiUsage(payload)
+            guard !rows.isEmpty else {
+                DispatchQueue.main.async { self.renderError() }
+                return
+            }
+            self.quotaData.windows = []
+            self.quotaData.deepSeekBalance = nil
+            self.quotaData.kimiUsageRows = rows
+            self.quotaData.fetchedAt = Date()
+            self.quotaData.ok = true
+            DispatchQueue.main.async { self.updateDisplay() }
+        }.resume()
+    }
+
+    private func parseKimiUsage(_ payload: [String: Any]) -> [KimiUsageRow] {
+        var rows: [KimiUsageRow] = []
+        if let limits = payload["limits"] as? [[String: Any]] {
+            for (index, item) in limits.enumerated() {
+                let detail = item["detail"] as? [String: Any] ?? item
+                let window = item["window"] as? [String: Any] ?? [:]
+                let name = kimiLimitName(item: item, detail: detail, window: window, index: index)
+                if let row = makeKimiUsageRow(detail, fallbackName: name) {
+                    rows.append(row)
+                }
+            }
+        }
+        // Kimi Code returns its overall membership cycle in `usage`; this is the 7-day quota.
+        if let usage = payload["usage"] as? [String: Any],
+           let row = makeKimiUsageRow(usage, fallbackName: "7d") {
+            rows.append(row)
+        }
+        return rows
+    }
+
+    private func makeKimiUsageRow(_ data: [String: Any], fallbackName: String) -> KimiUsageRow? {
+        guard let limit = intValue(data["limit"]) else { return nil }
+        let used = intValue(data["used"])
+            ?? ((intValue(data["remaining"]).map { limit - $0 }) ?? 0)
+        let name = (data["name"] as? String) ?? (data["title"] as? String) ?? fallbackName
+        return KimiUsageRow(name: name, used: used, limit: limit, resetsAt: kimiResetHint(data))
+    }
+
+    private func kimiLimitName(item: [String: Any], detail: [String: Any],
+                               window: [String: Any], index: Int) -> String {
+        for key in ["name", "title", "scope"] {
+            if let value = (item[key] ?? detail[key]) as? String, !value.isEmpty { return value }
+        }
+        let duration = intValue(window["duration"] ?? item["duration"] ?? detail["duration"])
+        let unit = (window["timeUnit"] ?? item["timeUnit"] ?? detail["timeUnit"]) as? String ?? ""
+        if let duration {
+            if unit.contains("MINUTE") { return duration >= 60 && duration % 60 == 0 ? "\(duration / 60)h" : "\(duration)m" }
+            if unit.contains("HOUR") { return "\(duration)h" }
+            if unit.contains("DAY") { return "\(duration)d" }
+        }
+        return "Limit #\(index + 1)"
+    }
+
+    private func kimiResetHint(_ data: [String: Any]) -> String? {
+        for key in ["reset_at", "resetAt", "reset_time", "resetTime"] {
+            if let value = data[key] { return "resets at \(value)" }
+        }
+        for key in ["reset_in", "resetIn", "ttl"] {
+            if let seconds = intValue(data[key]), seconds > 0 {
+                return "resets in \(formatDuration(seconds))"
+            }
+        }
+        return nil
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? Double { return Int(value) }
+        if let value = value as? String { return Int(value) }
+        return nil
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        if seconds >= 86_400 { return String(format: "%.1fd", Double(seconds) / 86_400) }
+        if seconds >= 3_600 { return String(format: "%.1fh", Double(seconds) / 3_600) }
+        return "\(seconds / 60)m"
     }
 
     // MARK: - Cache
@@ -465,6 +699,15 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
                 .foregroundColor: colorForBalance(total),
             ]))
             statusItem.button?.attributedTitle = attrStr
+        case .kimi:
+            guard !quotaData.kimiUsageRows.isEmpty else { renderError(); return }
+            let h5 = quotaData.kimiUsageRows.first { $0.name == "5h" }
+                ?? quotaData.kimiUsageRows.first!
+            let d7 = quotaData.kimiUsageRows.first { $0.name == "7d" }
+                ?? quotaData.kimiUsageRows.last!
+            let title = "Kimi \(h5.usedPct)% / \(d7.usedPct)%"
+            statusItem.button?.attributedTitle = attributed(title,
+                color: color(for: min(h5.remainingPct, d7.remainingPct)))
         case .unknown:
             renderError()
         }
@@ -551,6 +794,13 @@ final class QuotaBarAppDelegate: NSObject, NSApplicationDelegate {
             let modelItem = NSMenuItem(title: "模型  \(currentModelDisplayName()) ▸  点击切换", action: #selector(toggleModel), keyEquivalent: "m")
             modelItem.target = self
             menu.addItem(modelItem)
+        case .kimi:
+            for row in quotaData.kimiUsageRows {
+                let bar = makeBar(remaining: row.remainingPct)
+                var title = "\(row.name)  \(bar) \(row.usedPct)% used   \(row.remainingPct)% left"
+                if let resetsAt = row.resetsAt { title += "   \(resetsAt)" }
+                menu.addItem(.sectionHeader(title: title))
+            }
         case .unknown:
             menu.addItem(.sectionHeader(title: "未配置，请登录"))
         }
@@ -640,8 +890,12 @@ final class LoginWindowController: NSObject {
 
         providerPopup = NSPopUpButton(frame: NSRect(x: m, y: h - 96, width: fw, height: 26),
                                       pullsDown: false)
-        providerPopup.addItems(withTitles: ["GLM（智谱 BigModel）", "DeepSeek"])
-        providerPopup.selectItem(at: defaultProvider == .deepseek ? 1 : 0)
+        providerPopup.addItems(withTitles: ["GLM（智谱 BigModel）", "DeepSeek", "Kimi Code"])
+        switch defaultProvider {
+        case .deepseek: providerPopup.selectItem(at: 1)
+        case .kimi:     providerPopup.selectItem(at: 2)
+        default:        providerPopup.selectItem(at: 0)
+        }
         providerPopup.target = self
         providerPopup.action = #selector(providerChanged)
         view.addSubview(providerPopup)
@@ -676,7 +930,11 @@ final class LoginWindowController: NSObject {
     }
 
     private func currentProvider() -> ProviderType {
-        providerPopup.indexOfSelectedItem == 1 ? .deepseek : .glm
+        switch providerPopup.indexOfSelectedItem {
+        case 1: return .deepseek
+        case 2: return .kimi
+        default: return .glm
+        }
     }
 
     @objc private func providerChanged() { updateHint() }
@@ -685,14 +943,21 @@ final class LoginWindowController: NSObject {
         switch currentProvider() {
         case .deepseek: hintLabel.stringValue = "在 platform.deepseek.com 用户中心获取"
         case .glm:      hintLabel.stringValue = "在 open.bigmodel.cn → API Keys 获取"
+        case .kimi:     hintLabel.stringValue = "已登录 Kimi Code CLI 时会自动读取额度；也可粘贴 Kimi Code API Key"
         case .unknown:  hintLabel.stringValue = ""
         }
     }
 
     @objc private func confirmLogin() {
         let key = keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { NSSound.beep(); return }
         let provider = currentProvider()
+        let hasKimiCLILogin = FileManager.default.fileExists(atPath:
+            FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".kimi/credentials/kimi-code.json").path)
+        guard !key.isEmpty || (provider == .kimi && hasKimiCLILogin) else {
+            NSSound.beep()
+            return
+        }
         window.orderOut(nil)
         onLogin(provider, key)
     }
