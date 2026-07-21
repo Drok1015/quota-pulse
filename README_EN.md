@@ -1,5 +1,7 @@
 # QuotaPulse · 额度脉搏
 
+![Kimi Code quota display](./docs/kimi-code-quota.png)
+
 [中文](./README.md)
 
 A macOS menu bar app that shows your AI API quota / balance at a glance. No more tab-switching to check if you're about to run out of tokens.
@@ -44,6 +46,12 @@ Don't want to install CC Switch? Paste your API key directly into QuotaPulse. La
 Once logged in, the menu shows the current account and offers "Re-login" / "Log out". Logging out clears the manual config and falls back to env vars / CC Switch detection.
 
 **Key resolution priority**: manual login config > Kimi Code CLI OAuth > environment variables (`KIMI_API_KEY` / `GLM_API_KEY` / `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`) > CC Switch database.
+
+### Kimi Code quota
+
+- When Kimi Code CLI is signed in locally, QuotaPulse automatically reads `~/.kimi/credentials/kimi-code.json`; its OAuth token is refreshed automatically when needed.
+- You can also choose Kimi Code under “Re-login” and paste a Kimi Code API key.
+- The menu bar shows the 5-hour and 7-day usage percentages in that order, for example `Kimi 0% / 3%`. The expanded menu includes each window's used amount, remaining amount, and reset time.
 
 ## Build from Source
 

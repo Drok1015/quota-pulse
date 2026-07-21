@@ -1,5 +1,7 @@
 # QuotaPulse · 额度脉搏
 
+![Kimi Code 额度展示](./docs/kimi-code-quota.png)
+
 [English](./README_EN.md)
 
 一个 macOS 菜单栏小工具，把 AI API 的额度/余额实时挂在你屏幕顶部，抬眼可见，不用切窗口、不用开网页。
@@ -43,7 +45,13 @@ open ./outputs/QuotaPulse.app
 
 登录后菜单显示当前账号，并提供「重新登录」「退出登录」。退出登录会清除手动配置，自动回退到环境变量 / CC Switch 探测。
 
-**配置优先级**：手动登录配置 > 环境变量（`GLM_API_KEY` / `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`）> CC Switch 数据库。也就是说不管你用哪种方式，QuotaPulse 都能拿到 key。
+### Kimi Code 额度
+
+- 已在本机登录 Kimi Code CLI 时，QuotaPulse 自动读取 `~/.kimi/credentials/kimi-code.json`，无需再次粘贴 Key；OAuth 令牌过期时会自动刷新。
+- 也可在「重新登录」中选择 Kimi Code 并粘贴 Kimi Code API Key。
+- 菜单栏以 `Kimi 5h用量 / 7d用量` 的顺序显示两个百分比，例如截图中的 `Kimi 0% / 3%`；展开菜单可查看 5 小时和 7 天窗口的已用、剩余和重置时间。
+
+**配置优先级**：手动登录配置 > Kimi Code CLI OAuth > 环境变量（`KIMI_API_KEY` / `GLM_API_KEY` / `ZHIPU_API_KEY` / `DEEPSEEK_API_KEY`）> CC Switch 数据库。
 
 ## 从源码构建
 
